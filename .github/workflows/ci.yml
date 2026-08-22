@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      # Same ruff version as Taskfile.yml; rules come from ruff.toml.
+      - name: ruff
+        run: pipx run ruff==0.16.4 check check_log_latch.py
+
+      - name: shellcheck
+        run: shellcheck tests/run_tests.sh
+
+  test:
+    name: test (python ${{ matrix.python }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # The suite finishes in well under a minute. Anything beyond this is a run that hung,
+    # and a hung run should go red now rather than sit on a runner for six hours.
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported interpreter, and the newest, on both runner families:
+          # the tests touch stat(1), which differs between BSD and GNU.
+          #
+          # 3.8 names its runner instead of following ubuntu-latest. actions/python-versions
+          # builds 3.8 for 24.04 but not for 26.04, so the day ubuntu-latest moves on, this
+          # job would stop finding an interpreter. When 24.04 itself retires, either find
+          # another way to exercise 3.8 -- a container image -- or raise the floor in
+          # README.md, README.ja.md and ruff.toml to match.
+          - os: ubuntu-24.04
+            python: "3.8"
+          - os: ubuntu-latest
+            python: "3.11"
+          - os: ubuntu-latest
+            python: "3.14"
+          - os: macos-latest
+            python: "3.14"
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: run tests
+        run: bash tests/run_tests.sh

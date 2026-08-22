@@ -1,0 +1,9 @@
+target-version = "py38"
+line-length = 120
+
+[lint]
+select = ["E4", "E7", "E9", "F", "B", "S", "SIM", "UP", "EXE", "C4", "RUF"]
+ignore = [
+  # SHA-1 is used here to identify file content, never as a security primitive.
+  "S324",
+]

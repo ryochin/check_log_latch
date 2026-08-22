@@ -1,0 +1,57 @@
+version: "3"
+
+vars:
+  # Pinned so that lint results do not drift between machines.
+  RUFF: ruff@0.16.4
+  SOURCES: check_log_latch.py
+  SHELL_SOURCES: tests/run_tests.sh
+
+tasks:
+  lint:
+    desc: Lint everything
+    aliases: [l]
+    cmds:
+      - task: lint:python
+      - task: lint:shell
+
+  lint:python:
+    desc: Lint the plugin with ruff
+    cmds:
+      - uvx {{.RUFF}} check {{.SOURCES}}
+    preconditions:
+      - sh: command -v uvx
+        msg: uvx not found; install uv (https://docs.astral.sh/uv/)
+
+  lint:shell:
+    desc: Lint the test script with shellcheck
+    cmds:
+      - shellcheck {{.SHELL_SOURCES}}
+    preconditions:
+      - sh: command -v shellcheck
+        msg: shellcheck not found; install it (https://www.shellcheck.net/)
+
+  lint:fix:
+    desc: Apply ruff's safe autofixes
+    cmds:
+      - uvx {{.RUFF}} check --fix {{.SOURCES}}
+    preconditions:
+      - sh: command -v uvx
+        msg: uvx not found; install uv (https://docs.astral.sh/uv/)
+
+  test:
+    desc: Run the regression tests
+    aliases: [t]
+    cmds:
+      - bash {{.SHELL_SOURCES}}
+
+  check:
+    desc: Lint and test
+    aliases: [c]
+    cmds:
+      - task: lint
+      - task: test
+
+  default:
+    cmds:
+      - task -l --sort=none
+    silent: true
