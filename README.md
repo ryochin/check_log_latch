@@ -47,6 +47,7 @@ then a *latching* plugin is a better fit than `check_log`.
 - Nothing short of `--reset` clears it: not a full disk, not a damaged state file, not a
   `chmod`, not a runaway pattern
 - Absorbs log rotation and truncation
+- Strips terminal escape sequences, so a coloured log reads — and matches — as plain text
 - Never lets a log line forge plugin output or performance data
 - Returns standard Nagios exit codes, including for unexpected failures and for a bad
   command line
@@ -392,11 +393,25 @@ becomes `/`:
 ```
 
 Control characters become spaces for the same reason — a newline would start the
-long-output section — and because an escape sequence has no business reaching whatever
-renders the result. Matched lines are additionally quoted through `repr()`, which escapes
+long-output section. Matched lines are additionally quoted through `repr()`, which escapes
 them rather than dropping them.
 
-The state file keeps the line as it was.
+Terminal escape sequences are removed whole, and earlier: a log line is stripped of them as
+soon as it is read, before any pattern is applied to it. Rust and Go loggers colour their
+levels, and a log redirected to a file keeps the colour with nothing left to render it:
+
+```text
+\x1b[31mERROR\x1b[0m db down     ->     latest='ERROR db down'
+```
+
+This matters to more than the display. Patterns see the stripped line, so `-p '^ERROR'`
+anchors to the word rather than to the colour in front of it, and `-p 'ERROR db'` is not
+defeated by the reset code in between. `--max-output` counts the characters that are shown
+for the same reason.
+
+What reaches the state file is the line after that: the escapes gone, runs of whitespace
+collapsed to a single space, and `--max-output` applied. A `|`, and any control character
+that is not whitespace, is recorded as it stood and neutralized only on the way out.
 
 ## Nagios configuration
 
@@ -672,6 +687,12 @@ To look for a literal `[ERROR]`, escape the brackets:
 ```sh
 -p '\[ERROR\]'
 ```
+
+### Write patterns against the log as you read it
+
+Terminal escape sequences are stripped before matching, so a coloured line is matched as
+though it had never been coloured. There is no need to allow for the colour in a pattern,
+and no way to match it.
 
 ### Avoid nested quantifiers
 

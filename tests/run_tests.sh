@@ -421,6 +421,76 @@ expect=2 check "a line containing a pipe still latches" -F "$log" -p ERROR -s "$
 expect_output "the pipe is neutralized" "latest='ts=1 / level=ERROR / msg=disk full'"
 assert "only the perfdata separator is left" "$(printf '%s' "$out" | tr -cd '|')" "|"
 
+note "colour from a logger is stripped before the line is matched"
+workspace
+printf 'quiet\n' >"$log"
+expect=0 check "initialize" -F "$log" -p ERROR -s "$state" -t app
+printf '\033[31mERROR\033[0m myapp: database down\n' >>"$log"
+# The colour sits between the start of the line and the word, so an anchored pattern would
+# miss this line entirely if it were matched the way it lies on disk.
+expect=2 check "an anchored pattern reaches past the colour" -F "$log" -p '^ERROR' -s "$state" -t app
+expect_output "the colour is gone from the output" "latest='ERROR myapp: database down'"
+refute_output "no escape is quoted into the output" '\x1b'
+refute_output "no half of a sequence is left behind" '[31m'
+assert "the state file keeps the stripped line" \
+  "$("$python" -c 'import json, sys; print(json.load(open(sys.argv[1]))["latch"]["latest_match"])' "$state/app.json")" \
+  "ERROR myapp: database down"
+
+workspace
+printf 'quiet\n' >"$log"
+expect=0 check "initialize" -F "$log" -p ERROR -s "$state" -t app
+printf '\033[31mERROR\033[0m myapp: database down\n' >>"$log"
+# And the reset code sits between the word and the rest, which the same line has to survive.
+expect=2 check "a pattern reaches across the reset code" -F "$log" -p 'ERROR myapp' -s "$state" -t app
+
+note "escape sequences other than colour are stripped too"
+workspace
+printf 'quiet\n' >"$log"
+expect=0 check "initialize" -F "$log" -p ERROR -s "$state" -t app
+# An OSC with its BEL terminator, a two-character escape, and an ESC that begins nothing.
+printf '\033]0;title\007ERROR disk full\033M\033\n' >>"$log"
+expect=2 check "the line still latches" -F "$log" -p '^ERROR' -s "$state" -t app
+expect_output "every sequence is gone" "latest='ERROR disk full'"
+
+note "the payload of a terminal control string is not matchable text"
+workspace
+# ESC P ... ESC \ is a device control string. A terminal consumes the payload without ever
+# displaying it, so nothing in there is a log line either, and no pattern may reach it.
+printf 'ERROR \033PqSECRET\033\\ disk full\n' >"$log"
+expect=0 check "the payload does not latch" -F "$log" -p SECRET -s "$state" -t app --from-start
+workspace
+printf 'ERROR \033PqSECRET\033\\ disk full\n' >"$log"
+expect=2 check "the text around it still does" -F "$log" -p '^ERROR' -s "$state" -t app --from-start
+expect_output "the whole control string is gone" "latest='ERROR disk full'"
+
+note "text that only looks like a sequence is left alone"
+workspace
+printf 'quiet\n' >"$log"
+expect=0 check "initialize" -F "$log" -p ERROR -s "$state" -t app
+printf 'ERROR [31m is text without an ESC before it\n' >>"$log"
+expect=2 check "the line latches" -F "$log" -p ERROR -s "$state" -t app
+expect_output "the line is reported unchanged" "latest='ERROR [31m is text without an ESC before it'"
+
+note "--max-output counts the characters shown, not the escapes"
+workspace
+printf 'quiet\n' >"$log"
+expect=0 check "initialize" -F "$log" -p ERROR -s "$state" -t app
+printf '\033[31mERROR\033[0m 0123456789\n' >>"$log"
+expect=2 check "the coloured line latches" -F "$log" -p ERROR -s "$state" -t app --max-output 10
+expect_output "the limit applies to the stripped line" "latest='ERROR 012…'"
+
+note "a latch written before escapes were stripped still reports cleanly"
+workspace
+printf 'quiet\n' >"$log"
+expect=0 check "initialize" -F "$log" -p ERROR -s "$state" -t app
+"$python" -c 'import json, sys
+state = json.load(open(sys.argv[1]))
+state["latch"] = {"since": "2026-01-01T00:00:00+09:00", "count": 1,
+                  "latest_match": "\x1b[31mERROR\x1b[0m from an older version"}
+json.dump(state, open(sys.argv[1], "w"))' "$state/app.json"
+expect=2 check "the latch is reported" -F "$log" -p ERROR -s "$state" -t app
+expect_output "the colour is stripped on the way out" "latest='ERROR from an older version'"
+
 note "every exit that measured something reports the same perfdata labels"
 workspace
 printf 'quiet\n' >"$log"

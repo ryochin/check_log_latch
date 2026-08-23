@@ -57,6 +57,23 @@ DEFAULT_SCAN_TIMEOUT = 30.0
 # console, whatever a log line or a hand-edited state file has to say about it.
 CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
 
+# Colour, and everything else a terminal reads as an instruction rather than as text. Rust
+# and Go loggers colour their levels, and a log redirected to a file keeps the colour with
+# nothing left to render it, so the sequences arrive here as content nobody meant to write.
+# Dropping each one whole -- rather than blanking the ESC and leaving "[31m" behind -- is
+# what lets a pattern see the line the way the log means it to be read.
+#
+# Whole means the payload too. The string controls carry one as far as their terminator,
+# and a terminal displays none of it, so leaving it behind would offer a pattern text that
+# no one reading the log could ever see.
+ANSI_ESCAPES = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]"              # CSI: colour, cursor movement, erase
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?"  # OSC: window titles and friends, BEL- or ST-terminated
+    r"|\x1b[P^_X][^\x1b]*(?:\x1b\\)?"       # DCS, PM, APC, SOS: the other strings, ST-terminated
+    r"|\x1b[@-Z\\-_]"                       # the two-character escapes
+    r"|\x1b"                                # an ESC that begins none of the above
+)
+
 # The appended part of a log is matched in pieces of this size, so that the memory a run
 # needs follows the longest log line rather than how much the log grew since the last one.
 CHUNK_BYTES = 1024 * 1024
@@ -64,6 +81,21 @@ CHUNK_BYTES = 1024 * 1024
 
 def now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def strip_escapes(text: str) -> str:
+    """
+    Drop terminal escape sequences from log text.
+
+    This runs before a line is matched, not only before it is reported. A pattern written
+    against what the log looks like -- "^ERROR", or "ERROR myapp" reaching across the reset
+    code that follows the level -- would otherwise be defeated by the colour around the
+    word, which is a hard failure to see from the outside.
+
+    The guard keeps the cost off logs that carry no escapes at all: one substring search per
+    line instead of a substitution, on what is the whole file for most hosts.
+    """
+    return ANSI_ESCAPES.sub("", text) if "\x1b" in text else text
 
 
 def sanitize_output(message: str) -> str:
@@ -346,7 +378,7 @@ def match_lines(
                 drop_first_line = False
                 continue
 
-            line = decode_line(raw)
+            line = strip_escapes(decode_line(raw))
             for regex in patterns:
                 if regex.search(line):
                     count += 1
@@ -612,6 +644,10 @@ def latch_message(latch: dict[str, Any], suffix: str) -> str:
     enough to hold a latch that is not an object can just as easily hold a "since" that is
     not a date. What cannot be read out is reported as unknown, which is the one thing that
     is certainly true about it.
+
+    The matched line is stripped again on the way out. It was stripped on the way in, but a
+    latch written by an older version, or by a hand that edited the file, is a latch this
+    one still has to report, and only --reset would otherwise be rid of the escapes in it.
     """
     since = latch.get("since")
     latest = latch.get("latest_match")
@@ -619,7 +655,7 @@ def latch_message(latch: dict[str, Any], suffix: str) -> str:
     return (
         f"CRITICAL - log pattern latched since {since if isinstance(since, str) else 'unknown'}; "
         f"count={count if is_count(count) else 'unknown'}; "
-        f"latest={(latest if isinstance(latest, str) else 'unknown')!r}; "
+        f"latest={(strip_escapes(latest) if isinstance(latest, str) else 'unknown')!r}; "
         f"clear with --reset{suffix}"
     )
 
