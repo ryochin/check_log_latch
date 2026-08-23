@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from typing import Any, BinaryIO, Iterator, NamedTuple, NoReturn
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 OK = 0
 WARNING = 1
