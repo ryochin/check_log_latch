@@ -634,6 +634,46 @@ CRITICAL 通知
 次回チェックで OK / recovery 通知
 ```
 
+### 更新停止の検知と組み合わせる
+
+このプラグインが報告できるのは、読めたログの内容だけです。ラッチが無い状態でログが書かれ
+なくなれば一致する行も現れないため、アプリケーションが正常なときとまったく同じ OK を返し
+続けます。ログを出す前に死んだプロセス、ローテートで消えたファイルのハンドルを掴んだままの
+ロガー、read-only で再マウントされたファイルシステム — どれもここには現れません。ファイルが
+存在しない場合は既定で UNKNOWN になりますが（`--missing`、ラッチ中は無視）、存在したまま
+伸びなくなったファイルは、単に静かなログと見分けが付きません。
+
+そこで、ファイルの更新時刻を併せて監視します。monitoring-plugins 同梱の `check_file_age`
+は、指定秒数のあいだファイルが更新されていなければ WARNING、さらに CRITICAL になります。
+
+```nagios
+define command {
+  command_name  check_file_age
+  command_line  $USER1$/check_file_age -f '$ARG1$' -w $ARG2$ -c $ARG3$
+}
+```
+
+```nagios
+define service {
+  use                   generic-service
+  host_name             myapp-host
+  service_description   MyApp log freshness
+  check_command         check_file_age!/var/log/myapp/app.log!900!3600
+
+  normal_check_interval 5
+  max_check_attempts    3
+}
+```
+
+閾値は、そのログが平常時に最も静かになる時間より長く取ってください。夜間に無通信になる
+サービスだと、毎晩アラートが飛びます。異常時にしか行が出ないような、そもそも閾値を引け
+ないほど疎なログであれば、このプラグイン単独に任せる方が無難です。
+
+更新停止の検知側にラッチは要りません。書き込みが再開されるまで状態はひとりでに継続し、
+再開すればその時点で解消するためです。両者を並べると、互いの死角が埋まります —
+check_log_latch は「アプリケーションが異常を報告した」ことを、`check_file_age` は
+「アプリケーションがそもそも報告し続けている」ことを見ています。
+
 ### 状態ディレクトリの権限
 
 ```sh

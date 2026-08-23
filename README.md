@@ -634,6 +634,47 @@ A human investigates the log and the cause
 The next check is OK / recovery notification
 ```
 
+### Pair it with a freshness check
+
+This plugin reports only what it reads. With no latch held, a log that has stopped being
+written produces no matching lines, so the check returns the same OK it returns when the
+application is healthy. A process that died before it could log anything, a logger left
+holding the handle of a file that was rotated away, a filesystem remounted read-only — none
+of them show up here. A missing file is UNKNOWN by default (`--missing`, ignored while
+latched), but a file that merely stopped growing looks exactly like a quiet one.
+
+So watch the file's age alongside it. `check_file_age` ships with monitoring-plugins and
+goes WARNING, then CRITICAL, once a file has not been modified for a given number of
+seconds:
+
+```nagios
+define command {
+  command_name  check_file_age
+  command_line  $USER1$/check_file_age -f '$ARG1$' -w $ARG2$ -c $ARG3$
+}
+```
+
+```nagios
+define service {
+  use                   generic-service
+  host_name             myapp-host
+  service_description   MyApp log freshness
+  check_command         check_file_age!/var/log/myapp/app.log!900!3600
+
+  normal_check_interval 5
+  max_check_attempts    3
+}
+```
+
+Set the thresholds above the log's quietest normal stretch, or a service that goes idle
+overnight will alert every night. A log too sparse for any threshold — one that gets a line
+only when something goes wrong — is better left to this plugin alone.
+
+The freshness check needs no latch of its own: staleness persists by itself until writing
+resumes, and clears the moment it does. Between the two, each covers what the other cannot
+see — check_log_latch says the application reported something bad, `check_file_age` says
+the application is still reporting at all.
+
 ### State directory permissions
 
 ```sh
